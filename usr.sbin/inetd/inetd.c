@@ -372,7 +372,7 @@ static int	my_kevent(const struct kevent *, size_t, struct kevent *,
 		size_t);
 static struct kevent *	allocchange(void);
 static int	get_line(int, char *, int);
-static void	spawn(struct servtab *, int);
+static void	spawn(struct servtab *);
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -489,7 +489,6 @@ main(int argc, char *argv[])
 	}
 
 	for (;;) {
-		int		ctrl;
 		struct kevent	eventbuf[64], *ev;
 		struct servtab	*sep;
 
@@ -529,31 +528,35 @@ main(int argc, char *argv[])
 			if (debug)
 				fprintf(stderr, "someone wants %s\n",
 				    sep->se_service);
-			if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
-				/* XXX here do the libwrap check-before-accept*/
-				ctrl = accept(sep->se_fd, NULL, NULL);
-				if (debug)
-					fprintf(stderr, "accept, ctrl %d\n",
-					    ctrl);
-				if (ctrl < 0) {
-					if (errno != EINTR)
-						syslog(LOG_WARNING,
-						    "accept (for %s): %m",
-						    sep->se_service);
-					continue;
-				}
-			} else
-				ctrl = sep->se_fd;
-			spawn(sep, ctrl);
+
+			spawn(sep);
 		}
 	}
 }
 
 static void
-spawn(struct servtab *sep, int ctrl)
+spawn(struct servtab *sep)
 {
 	int dofork;
 	pid_t pid;
+	int ctrl;
+
+	if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
+		/* XXX here do the libwrap check-before-accept*/
+		ctrl = accept(sep->se_fd, NULL, NULL);
+		if (debug)
+			fprintf(stderr, "accept, ctrl %d\n",
+			    ctrl);
+		if (ctrl < 0) {
+			if (errno != EINTR)
+				syslog(LOG_WARNING,
+				    "accept (for %s): %m",
+				    sep->se_service);
+			return;
+		}
+	} else {
+		ctrl = sep->se_fd;
+	}
 
 	pid = 0;
 #ifdef LIBWRAP_INTERNAL
