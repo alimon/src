@@ -25,4 +25,7 @@ SRCS+=	ipsec.c
 LDADD+= -lipsec
 DPADD+=	${LIBIPSEC}
 
+CPPFLAGS+=-DPREFORK
+SRCS+=	prefork.c
+
 .include <bsd.prog.mk>

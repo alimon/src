@@ -251,11 +251,15 @@ int allow_severity = LIBWRAP_ALLOW_FACILITY|LIBWRAP_ALLOW_SEVERITY;
 int deny_severity = LIBWRAP_DENY_FACILITY|LIBWRAP_DENY_SEVERITY;
 #endif
 
+#include "common.h"
+
+#ifdef PREFORK
+#include "prefork.h"
+#endif
+
 #define	TOOMANY		40		/* don't start more than TOOMANY */
 #define	CNT_INTVL	60		/* servers in CNT_INTVL sec. */
 #define	RETRYTIME	(60*10)		/* retry after bind or server fail */
-
-#define	A_CNT(a)	(sizeof (a) / sizeof (a[0]))
 
 int	debug;
 #ifdef LIBWRAP
@@ -418,9 +422,6 @@ u_int16_t bad_ports[] =  { 7, 9, 13, 19, 37, 0 };
 #define NUMINT	(sizeof(intab) / sizeof(struct inent))
 const char	*CONFIG = _PATH_INETDCONF;
 
-static int my_signals[] =
-    { SIGALRM, SIGHUP, SIGCHLD, SIGTERM, SIGINT, SIGPIPE };
-
 int
 main(int argc, char *argv[])
 {
@@ -495,6 +496,9 @@ main(int argc, char *argv[])
 		if (reload) {
 			reload = 0;
 			config();
+#ifdef PREFORK
+			prefork_start();
+#endif
 		}
 
 		n = my_kevent(changebuf, changes, eventbuf, A_CNT(eventbuf));
@@ -505,6 +509,9 @@ main(int argc, char *argv[])
 				switch (ev->ident) {
 				case SIGALRM:
 					retry();
+#ifdef PREFORK
+					prefork_start();
+#endif
 					break;
 				case SIGCHLD:
 					reapchild();
@@ -531,6 +538,10 @@ main(int argc, char *argv[])
 
 			spawn(sep);
 		}
+
+#ifdef PREFORK
+		prefork_loop();
+#endif
 	}
 }
 
@@ -1034,6 +1045,9 @@ goaway(void)
 		(void)close(sep->se_fd);
 		sep->se_fd = -1;
 	}
+#ifdef PREFORK
+	prefork_stop(1);
+#endif
 	exit(0);
 }
 
