@@ -11,6 +11,10 @@
 #define	A_CNT(a)	(sizeof (a) / sizeof (a[0]))
 #define SIGNAL_HANDLE_NUM	6
 
+#define TOOMANY         40              /* don't start more than TOOMANY */
+#define CNT_INTVL       60              /* servers in CNT_INTVL sec. */
+#define	RETRYTIME	(60*10)		/* retry after bind or server fail */
+
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
 	char	*se_service;		/* name of service */
@@ -66,5 +70,8 @@ extern int inetd_libwrap_validate(int, struct servtab *);
 #endif
 
 extern int get_ctrl_fd(struct servtab *);
+
+extern void close_sep(struct servtab *);
+extern int service_spawn_rate_validate(int, struct servtab *);
 
 #endif 

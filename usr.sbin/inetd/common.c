@@ -1,9 +1,11 @@
 #include <syslog.h>
+#include <unistd.h>
 #include <errno.h>
 
 #include "common.h"
 
 extern int debug;
+extern int timingout;
 
 #ifdef LIBWRAP
 #include <tcpd.h>
@@ -105,3 +107,48 @@ get_ctrl_fd(struct servtab *sep)
 	return ctrl;
 }
 
+/*
+ * Finish with a service and its socket.
+ */
+void
+close_sep(struct servtab *sep)
+{
+	if (sep->se_fd >= 0) {
+		(void) close(sep->se_fd);
+		sep->se_fd = -1;
+	}
+	sep->se_count = 0;
+}
+
+int
+service_spawn_rate_validate(int ctrl, struct servtab *sep)
+{
+	if (sep->se_count++ == 0)
+		(void)gettimeofday(&sep->se_time, NULL);
+	else if (sep->se_count >= sep->se_max) {
+		struct timeval now;
+
+		(void)gettimeofday(&now, NULL);
+		if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
+			sep->se_time = now;
+			sep->se_count = 1;
+		} else {
+			syslog(LOG_ERR,
+			    "%s/%s max spawn rate (%d in %d seconds) "
+			    "exceeded; service not started",
+			    sep->se_service, sep->se_proto,
+			    sep->se_max, CNT_INTVL);
+			if (!sep->se_wait && sep->se_socktype ==
+			    SOCK_STREAM)
+				close(ctrl);
+			close_sep(sep);
+			if (!timingout) {
+				timingout = 1;
+				alarm(RETRYTIME);
+			}
+			return 1;
+		}
+	}
+
+	return 0;
+}

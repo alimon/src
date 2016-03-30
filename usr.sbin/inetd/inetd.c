@@ -239,10 +239,6 @@ __RCSID("$NetBSD: inetd.c,v 1.125 2017/11/28 11:51:11 martin Exp $");
 #include "prefork.h"
 #endif
 
-#define	TOOMANY		40		/* don't start more than TOOMANY */
-#define	CNT_INTVL	60		/* servers in CNT_INTVL sec. */
-#define	RETRYTIME	(60*10)		/* retry after bind or server fail */
-
 int	debug;
 #ifdef LIBWRAP
 int	lflag;
@@ -277,7 +273,6 @@ size_t		changes;
 
 static void	chargen_dg(int, struct servtab *);
 static void	chargen_stream(int, struct servtab *);
-static void	close_sep(struct servtab *);
 static void	config(void);
 static void	daytime_dg(int, struct servtab *);
 static void	daytime_stream(int, struct servtab *);
@@ -500,32 +495,9 @@ spawn(struct servtab *sep)
 	dofork = (sep->se_bi == 0 || sep->se_bi->bi_fork);
 #endif
 	if (dofork) {
-		if (sep->se_count++ == 0)
-			(void)gettimeofday(&sep->se_time, NULL);
-		else if (sep->se_count >= sep->se_max) {
-			struct timeval now;
+		if (service_spawn_rate_validate(ctrl, sep))
+			return;
 
-			(void)gettimeofday(&now, NULL);
-			if (now.tv_sec - sep->se_time.tv_sec > CNT_INTVL) {
-				sep->se_time = now;
-				sep->se_count = 1;
-			} else {
-				syslog(LOG_ERR,
-				    "%s/%s max spawn rate (%d in %d seconds) "
-				    "exceeded; service not started",
-				    sep->se_service, sep->se_proto,
-				    sep->se_max, CNT_INTVL);
-				if (!sep->se_wait && sep->se_socktype ==
-				    SOCK_STREAM)
-					close(ctrl);
-				close_sep(sep);
-				if (!timingout) {
-					timingout = 1;
-					alarm(RETRYTIME);
-				}
-				return;
-			}
-		}
 		pid = fork();
 		if (pid < 0) {
 			syslog(LOG_ERR, "fork: %m");
@@ -1037,19 +1009,6 @@ setsockopt(fd, SOL_SOCKET, opt, &on, (socklen_t)sizeof(on))
 	if (debug)
 		fprintf(stderr, "registered %s on %d\n",
 		    sep->se_server, sep->se_fd);
-}
-
-/*
- * Finish with a service and its socket.
- */
-static void
-close_sep(struct servtab *sep)
-{
-	if (sep->se_fd >= 0) {
-		(void) close(sep->se_fd);
-		sep->se_fd = -1;
-	}
-	sep->se_count = 0;
 }
 
 static void
