@@ -14,6 +14,8 @@
 #define PREFORK_DEFAULT_MAX_CHILD 8
 #define PREFORK_DEFAULT_MIN_CHILD 2
 
+extern int handled_signals[SIGNAL_HANDLE_NUM];
+
 enum prefork_child_event_type {
 	PREFORK_CHILD_EVENT_TYPE_HANDLE,
 	PREFORK_CHILD_EVENT_TYPE_STOP,
@@ -163,8 +165,8 @@ prefork_child_main(struct prefork_child_ctx *pfch)
 {
 	struct prefork_child_event event;
 
-	for (size_t n = 0; n < A_CNT(my_signals); n++)
-		(void) signal(my_signals[n], SIG_DFL);
+	for (int n = 0; n < SIGNAL_HANDLE_NUM; n++)
+		(void) signal(handled_signals[n], SIG_DFL);
 	close(pfch->pipefd[1]);
 
 	while (1) {

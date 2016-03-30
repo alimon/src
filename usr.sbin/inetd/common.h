@@ -9,6 +9,7 @@
 #include <sys/un.h>
 
 #define	A_CNT(a)	(sizeof (a) / sizeof (a[0]))
+#define SIGNAL_HANDLE_NUM	6
 
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
@@ -59,8 +60,5 @@ struct biltin {
 	short	bi_wait;		/* 1 if should wait for child */
 	void	(*bi_fn)(int, struct servtab *);
 };
-
-static int my_signals[] =
-    { SIGALRM, SIGHUP, SIGCHLD, SIGTERM, SIGINT, SIGPIPE };
 
 #endif 

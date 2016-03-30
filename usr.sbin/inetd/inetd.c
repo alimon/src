@@ -373,6 +373,9 @@ u_int16_t bad_ports[] =  { 7, 9, 13, 19, 37, 0 };
 #define NUMINT	(sizeof(intab) / sizeof(struct inent))
 const char	*CONFIG = _PATH_INETDCONF;
 
+int handled_signals[SIGNAL_HANDLE_NUM] =
+    { SIGALRM, SIGHUP, SIGCHLD, SIGTERM, SIGINT, SIGPIPE };
+
 int
 main(int argc, char *argv[])
 {
@@ -424,10 +427,10 @@ main(int argc, char *argv[])
 			rlim_ofile_cur = OPEN_MAX;
 	}
 
-	for (n = 0; n < (int)A_CNT(my_signals); n++) {
+	for (n = 0; n < SIGNAL_HANDLE_NUM; n++) {
 		int	signum;
 
-		signum = my_signals[n];
+		signum = handled_signals[n];
 		if (signum != SIGCHLD)
 			(void) signal(signum, SIG_IGN);
 
@@ -570,10 +573,8 @@ spawn(struct servtab *sep)
 			    EV_DELETE, 0, 0, 0);
 		}
 		if (pid == 0) {
-			size_t	n;
-
-			for (n = 0; n < A_CNT(my_signals); n++)
-				(void) signal(my_signals[n], SIG_DFL);
+			for (int n = 0; n < SIGNAL_HANDLE_NUM; n++)
+				(void) signal(handled_signals[n], SIG_DFL);
 			if (debug)
 				setsid();
 		}
