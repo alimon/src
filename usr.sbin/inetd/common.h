@@ -61,4 +61,8 @@ struct biltin {
 	void	(*bi_fn)(int, struct servtab *);
 };
 
+#ifdef LIBWRAP
+extern int inetd_libwrap_validate(int, struct servtab *);
+#endif
+
 #endif 
