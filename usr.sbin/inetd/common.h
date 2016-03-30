@@ -65,4 +65,6 @@ struct biltin {
 extern int inetd_libwrap_validate(int, struct servtab *);
 #endif
 
+extern int get_ctrl_fd(struct servtab *);
+
 #endif 

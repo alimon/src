@@ -488,22 +488,10 @@ spawn(struct servtab *sep)
 	pid_t pid;
 	int ctrl;
 
-	if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
-		/* XXX here do the libwrap check-before-accept*/
-		ctrl = accept(sep->se_fd, NULL, NULL);
-		if (debug)
-			fprintf(stderr, "accept, ctrl %d\n",
-			    ctrl);
-		if (ctrl < 0) {
-			if (errno != EINTR)
-				syslog(LOG_WARNING,
-				    "accept (for %s): %m",
-				    sep->se_service);
-			return;
-		}
-	} else {
-		ctrl = sep->se_fd;
-	}
+	/* XXX here do the libwrap check-before-accept*/
+	ctrl = get_ctrl_fd(sep);
+	if (ctrl < 0)
+		return;
 
 	pid = 0;
 #ifdef LIBWRAP_INTERNAL

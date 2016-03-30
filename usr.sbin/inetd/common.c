@@ -1,3 +1,6 @@
+#include <syslog.h>
+#include <errno.h>
+
 #include "common.h"
 
 extern int debug;
@@ -5,7 +8,6 @@ extern int debug;
 #ifdef LIBWRAP
 #include <tcpd.h>
 #include <netdb.h>
-#include <syslog.h>
 #include <string.h>
 #include <util.h>
 
@@ -79,3 +81,27 @@ inetd_libwrap_validate(int ctrl, struct servtab *sep)
 }
 
 #endif /* LIBWRAP */
+
+int
+get_ctrl_fd(struct servtab *sep)
+{
+	int ctrl;
+
+	if (!sep->se_wait && sep->se_socktype == SOCK_STREAM) {
+		ctrl = accept(sep->se_fd, NULL, NULL);
+		if (debug)
+			fprintf(stderr, "accept, ctrl %d\n",
+			    ctrl);
+		if (ctrl < 0) {
+			if (errno != EINTR)
+				syslog(LOG_WARNING,
+				    "accept (for %s): %m",
+				    sep->se_service);
+		}
+	} else {
+		ctrl = sep->se_fd;
+	}
+
+	return ctrl;
+}
+
