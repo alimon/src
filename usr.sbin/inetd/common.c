@@ -1,6 +1,11 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <grp.h>
+#include <netdb.h>
+#include <pwd.h>
+#include <sys/resource.h>
 
 #include "common.h"
 
@@ -31,7 +36,10 @@ extern int timingout;
 
 int allow_severity = LIBWRAP_ALLOW_FACILITY|LIBWRAP_ALLOW_SEVERITY;
 int deny_severity = LIBWRAP_DENY_FACILITY|LIBWRAP_DENY_SEVERITY;
+
 extern int lflag;
+extern rlim_t rlim_ofile_cur;
+extern struct rlimit rlim_ofile;
 
 int
 inetd_libwrap_validate(int ctrl, struct servtab *sep)
@@ -151,4 +159,87 @@ service_spawn_rate_validate(int ctrl, struct servtab *sep)
 	}
 
 	return 0;
+}
+
+extern void
+run_service(int ctrl, struct servtab *sep, int didfork)
+{
+	struct passwd *pwd;
+	struct group *grp = NULL;	/* XXX gcc */
+	char buf[NI_MAXSERV];
+	struct servtab *s;
+
+#ifdef LIBWRAP
+	if (inetd_libwrap_validate(ctrl, sep)) 
+		goto reject;
+#endif
+
+	printf("HERE\n");
+	if (sep->se_bi) {
+		printf("HERE BI\n");
+		if (didfork) {
+			for (s = servtab; s; s = s->se_next)
+				if (s->se_fd != -1 && s->se_fd != ctrl) {
+					close(s->se_fd);
+					s->se_fd = -1;
+				}
+		}
+		(*sep->se_bi->bi_fn)(ctrl, sep);
+	} else {
+		printf("HERE EXEC\n");
+		if ((pwd = getpwnam(sep->se_user)) == NULL) {
+			syslog(LOG_ERR, "%s/%s: %s: No such user",
+			    sep->se_service, sep->se_proto, sep->se_user);
+			goto reject;
+		}
+		if (sep->se_group &&
+		    (grp = getgrnam(sep->se_group)) == NULL) {
+			syslog(LOG_ERR, "%s/%s: %s: No such group",
+			    sep->se_service, sep->se_proto, sep->se_group);
+			goto reject;
+		}
+		if (pwd->pw_uid) {
+			if (sep->se_group)
+				pwd->pw_gid = grp->gr_gid;
+			if (setgid(pwd->pw_gid) < 0) {
+				syslog(LOG_ERR,
+				 "%s/%s: can't set gid %d: %m", sep->se_service,
+				    sep->se_proto, pwd->pw_gid);
+				goto reject;
+			}
+			(void) initgroups(pwd->pw_name,
+			    pwd->pw_gid);
+			if (setuid(pwd->pw_uid) < 0) {
+				syslog(LOG_ERR,
+				 "%s/%s: can't set uid %d: %m", sep->se_service,
+				    sep->se_proto, pwd->pw_uid);
+				goto reject;
+			}
+		} else if (sep->se_group) {
+			(void) setgid((gid_t)grp->gr_gid);
+		}
+		if (debug)
+			fprintf(stderr, "%d execl %s\n",
+			    getpid(), sep->se_server);
+		/* Set our control descriptor to not close-on-exec... */
+		if (fcntl(ctrl, F_SETFD, 0) < 0)
+			syslog(LOG_ERR, "fcntl (%d, F_SETFD, 0): %m", ctrl);
+		/* ...and dup it to stdin, stdout, and stderr. */
+		if (ctrl != 0) {
+			dup2(ctrl, 0);
+			close(ctrl);
+			ctrl = 0;
+		}
+		dup2(0, 1);
+		dup2(0, 2);
+		if (rlim_ofile.rlim_cur != rlim_ofile_cur &&
+		    setrlimit(RLIMIT_NOFILE, &rlim_ofile) < 0)
+			syslog(LOG_ERR, "setrlimit: %m");
+		execv(sep->se_server, sep->se_argv);
+		syslog(LOG_ERR, "cannot execute %s: %m", sep->se_server);
+	reject:
+		if (sep->se_socktype != SOCK_STREAM)
+			recv(ctrl, buf, sizeof (buf), 0);
+		_exit(1);
+	}
 }

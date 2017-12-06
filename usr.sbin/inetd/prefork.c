@@ -7,6 +7,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
+#include <poll.h>
 
 #include "common.h"
 #include "prefork.h"
@@ -14,16 +16,17 @@
 #define PREFORK_DEFAULT_MAX_CHILD 8
 #define PREFORK_DEFAULT_MIN_CHILD 2
 
+extern int debug;
 extern int handled_signals[SIGNAL_HANDLE_NUM];
 
 enum prefork_child_event_type {
-	PREFORK_CHILD_EVENT_TYPE_HANDLE,
+	PREFORK_CHILD_EVENT_TYPE_RUN,
 	PREFORK_CHILD_EVENT_TYPE_STOP,
 };
 
-struct prefork_child_event {
-	enum prefork_child_event_type type;
-	void *data;
+struct prefork_child_event_run {
+	struct servtab *sep;
+	int didfork;
 };
 
 struct prefork_child_ctx {
@@ -91,6 +94,7 @@ prefork_start(void)
 void
 prefork_loop(void)
 {
+ // XXX: to check if child is min to set to max
 }
 
 void
@@ -107,6 +111,43 @@ prefork_stop(int wait)
 	_ctx.curr_child = 0;
 }
 
+pid_t
+prefork_get(void)
+{
+	struct prefork_child_ctx *pfch;
+
+	if (_ctx.curr_child == 0) {
+		// XXX: spawn more childs
+	}
+
+	pfch = TAILQ_FIRST(&_ctx.childs_head);
+	// XXX: assert on NULL?
+	return pfch->pid;
+}
+
+extern void
+prefork_run_service(pid_t pid, struct servtab *sep, int didfork)
+{
+	struct prefork_child_ctx *pfch;
+	int evtype = PREFORK_CHILD_EVENT_TYPE_RUN;
+	struct prefork_child_event_run evrun;
+
+	TAILQ_FOREACH(pfch, &_ctx.childs_head, childs) {
+		if (pfch->pid == pid)
+			break;
+	}
+
+	evrun.sep = sep;
+	evrun.didfork = didfork;
+
+	write(pfch->pipefd[1], &evtype, sizeof(int));
+	write(pfch->pipefd[1], &evrun, sizeof(struct prefork_child_event_run));
+
+	TAILQ_REMOVE(&_ctx.childs_head, pfch, childs);
+	close(pfch->pipefd[1]);
+	free(pfch);
+	_ctx.curr_child--;
+}
 
 static struct prefork_child_ctx *
 prefork_child_create(void)
@@ -149,11 +190,9 @@ out:
 static void
 prefork_child_delete(struct prefork_child_ctx *pfch, int wait)
 {
-	struct prefork_child_event event = {
-		.type = PREFORK_CHILD_EVENT_TYPE_STOP
-	};
+	int evtype = PREFORK_CHILD_EVENT_TYPE_STOP;
 
-	write(pfch->pipefd[1], &event, sizeof(struct prefork_child_event));
+	write(pfch->pipefd[1], &evtype, sizeof(int));
 	if (wait)
 		waitpid(pfch->pid, NULL, 0);
 	close(pfch->pipefd[1]);
@@ -163,22 +202,46 @@ prefork_child_delete(struct prefork_child_ctx *pfch, int wait)
 static void
 prefork_child_main(struct prefork_child_ctx *pfch)
 {
-	struct prefork_child_event event;
+	int evtype;
+	struct pollfd fds;
 
 	for (int n = 0; n < SIGNAL_HANDLE_NUM; n++)
 		(void) signal(handled_signals[n], SIG_DFL);
 	close(pfch->pipefd[1]);
 
+
+	fds.fd = pfch->pipefd[0];
+	fds.events = POLLIN;
+	fds.revents = 0;
+
 	while (1) {
-		ssize_t rc = read(pfch->pipefd[0], &event,
-				sizeof(struct prefork_child_event));
+		int rc;
+		rc = poll(&fds, 1, -1);
+		if (rc <= 0)
+			continue;
+
+		rc = read(pfch->pipefd[0], &evtype, sizeof(int));
 		if (rc == -1) {
 			if (errno == EINTR)
 				continue;
 			exit(0);
 		} else if (rc > 0) {
-			switch (event.type) {
-				case PREFORK_CHILD_EVENT_TYPE_HANDLE:
+			struct prefork_child_event_run evrun;
+			int ctrl;
+
+			switch (evtype) {
+				case PREFORK_CHILD_EVENT_TYPE_RUN:
+					rc = read(pfch->pipefd[0], &evrun, sizeof(struct prefork_child_event_run));
+					if (rc == -1)
+						puts(strerror(errno));
+					printf("read %d of %ld\n", rc, sizeof(struct prefork_child_event_run));
+
+					ctrl = get_ctrl_fd(evrun.sep);
+					printf("Values %d, %p, %d\n", ctrl, (void*) evrun.sep, evrun.didfork);
+					if (ctrl >= 0)
+						run_service(ctrl, evrun.sep, evrun.didfork);
+					if (evrun.didfork)
+						exit(0);
 					break;
 				case PREFORK_CHILD_EVENT_TYPE_STOP:
 					exit(0);

@@ -292,7 +292,6 @@ static char    *nextline(FILE *);
 static void	print_service(const char *, struct servtab *);
 static void	reapchild(void);
 static void	retry(void);
-static void	run_service(int, struct servtab *, int);
 static int	setconfig(void);
 static void	setup(struct servtab *);
 static char    *sskip(char **);
@@ -481,12 +480,14 @@ spawn(struct servtab *sep)
 {
 	int dofork;
 	pid_t pid;
+#ifndef PREFORK
 	int ctrl;
 
 	/* XXX here do the libwrap check-before-accept*/
 	ctrl = get_ctrl_fd(sep);
 	if (ctrl < 0)
 		return;
+#endif
 
 	pid = 0;
 #ifdef LIBWRAP_INTERNAL
@@ -495,6 +496,9 @@ spawn(struct servtab *sep)
 	dofork = (sep->se_bi == 0 || sep->se_bi->bi_fork);
 #endif
 	if (dofork) {
+#ifdef PREFORK
+		pid = prefork_get();
+#else
 		if (service_spawn_rate_validate(ctrl, sep))
 			return;
 
@@ -506,6 +510,8 @@ spawn(struct servtab *sep)
 			sleep(1);
 			return;
 		}
+#endif
+
 		if (pid != 0 && sep->se_wait) {
 			struct kevent	*ev;
 
@@ -514,6 +520,7 @@ spawn(struct servtab *sep)
 			EV_SET(ev, sep->se_fd, EVFILT_READ,
 			    EV_DELETE, 0, 0, 0);
 		}
+
 		if (pid == 0) {
 			for (int n = 0; n < SIGNAL_HANDLE_NUM; n++)
 				(void) signal(handled_signals[n], SIG_DFL);
@@ -521,6 +528,9 @@ spawn(struct servtab *sep)
 				setsid();
 		}
 	}
+#ifdef PREFORK
+	prefork_run_service(pid, sep, dofork);
+#else
 	if (pid == 0) {
 		run_service(ctrl, sep, dofork);
 		if (dofork)
@@ -528,87 +538,7 @@ spawn(struct servtab *sep)
 	}
 	if (!sep->se_wait && sep->se_socktype == SOCK_STREAM)
 		close(ctrl);
-}
-
-
-static void
-run_service(int ctrl, struct servtab *sep, int didfork)
-{
-	struct passwd *pwd;
-	struct group *grp = NULL;	/* XXX gcc */
-	char buf[NI_MAXSERV];
-	struct servtab *s;
-
-#ifdef LIBWRAP
-	if (inetd_libwrap_validate(ctrl, sep)) 
-		goto reject;
 #endif
-
-	if (sep->se_bi) {
-		if (didfork) {
-			for (s = servtab; s; s = s->se_next)
-				if (s->se_fd != -1 && s->se_fd != ctrl) {
-					close(s->se_fd);
-					s->se_fd = -1;
-				}
-		}
-		(*sep->se_bi->bi_fn)(ctrl, sep);
-	} else {
-		if ((pwd = getpwnam(sep->se_user)) == NULL) {
-			syslog(LOG_ERR, "%s/%s: %s: No such user",
-			    sep->se_service, sep->se_proto, sep->se_user);
-			goto reject;
-		}
-		if (sep->se_group &&
-		    (grp = getgrnam(sep->se_group)) == NULL) {
-			syslog(LOG_ERR, "%s/%s: %s: No such group",
-			    sep->se_service, sep->se_proto, sep->se_group);
-			goto reject;
-		}
-		if (pwd->pw_uid) {
-			if (sep->se_group)
-				pwd->pw_gid = grp->gr_gid;
-			if (setgid(pwd->pw_gid) < 0) {
-				syslog(LOG_ERR,
-				 "%s/%s: can't set gid %d: %m", sep->se_service,
-				    sep->se_proto, pwd->pw_gid);
-				goto reject;
-			}
-			(void) initgroups(pwd->pw_name,
-			    pwd->pw_gid);
-			if (setuid(pwd->pw_uid) < 0) {
-				syslog(LOG_ERR,
-				 "%s/%s: can't set uid %d: %m", sep->se_service,
-				    sep->se_proto, pwd->pw_uid);
-				goto reject;
-			}
-		} else if (sep->se_group) {
-			(void) setgid((gid_t)grp->gr_gid);
-		}
-		if (debug)
-			fprintf(stderr, "%d execl %s\n",
-			    getpid(), sep->se_server);
-		/* Set our control descriptor to not close-on-exec... */
-		if (fcntl(ctrl, F_SETFD, 0) < 0)
-			syslog(LOG_ERR, "fcntl (%d, F_SETFD, 0): %m", ctrl);
-		/* ...and dup it to stdin, stdout, and stderr. */
-		if (ctrl != 0) {
-			dup2(ctrl, 0);
-			close(ctrl);
-			ctrl = 0;
-		}
-		dup2(0, 1);
-		dup2(0, 2);
-		if (rlim_ofile.rlim_cur != rlim_ofile_cur &&
-		    setrlimit(RLIMIT_NOFILE, &rlim_ofile) < 0)
-			syslog(LOG_ERR, "setrlimit: %m");
-		execv(sep->se_server, sep->se_argv);
-		syslog(LOG_ERR, "cannot execute %s: %m", sep->se_server);
-	reject:
-		if (sep->se_socktype != SOCK_STREAM)
-			recv(ctrl, buf, sizeof (buf), 0);
-		_exit(1);
-	}
 }
 
 static void

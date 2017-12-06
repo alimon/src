@@ -74,4 +74,6 @@ extern int get_ctrl_fd(struct servtab *);
 extern void close_sep(struct servtab *);
 extern int service_spawn_rate_validate(int, struct servtab *);
 
+extern void run_service(int, struct servtab *, int didfork);
+
 #endif 

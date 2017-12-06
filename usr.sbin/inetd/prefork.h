@@ -5,4 +5,7 @@ extern void prefork_start(void);
 extern void prefork_loop(void);
 extern void prefork_stop(int);
 
+extern pid_t prefork_get(void);
+extern void prefork_run_service(pid_t, struct servtab *, int);
+
 #endif
